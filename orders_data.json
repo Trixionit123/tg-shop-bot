@@ -1,0 +1,33 @@
+{
+  "ORDER_20250425_135911_7100115774": {
+    "user_id": 7100115774,
+    "delivery_method": "📮 Европочта",
+    "timestamp": "2025-04-25 13:59:11"
+  },
+  "ORDER_20250425_140117_7100115774": {
+    "user_id": 7100115774,
+    "delivery_method": "📮 Европочта",
+    "timestamp": "2025-04-25 14:01:17"
+  },
+  "ORDER_20250425_140530_7100115774": {
+    "user_id": "7100115774",
+    "username": "@pmaaaaaaaaaa",
+    "full_name": "111",
+    "delivery_method": "📮 Европочта",
+    "timestamp": "2025-04-25 14:05:30"
+  },
+  "ORDER_20250425_140748_7100115774": {
+    "user_id": "7100115774",
+    "username": "@pmaaaaaaaaaa",
+    "full_name": "111",
+    "delivery_method": "📮 Европочта",
+    "timestamp": "2025-04-25 14:07:48"
+  },
+  "ORDER_20250425_220130_7100115774": {
+    "user_id": "7100115774",
+    "username": "@pmaaaaaaaaaa",
+    "full_name": "111",
+    "delivery_method": "📮 Европочта",
+    "timestamp": "2025-04-25 22:01:30"
+  }
+}
