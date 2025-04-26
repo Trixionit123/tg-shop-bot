@@ -1,4 +1,3 @@
-
 import os
 import json
 import logging
@@ -18,7 +17,7 @@ logging.basicConfig(
 )
 
 # Conversation states
-MAIN_MENU, CATALOG, LOYALTY, TRACKING, FAQ, DELIVERY, SELECTING_QUANTITY, USE_POINTS, DELIVERY_METHOD, ENTER_USER_DATA, CONFIRM_ORDER, WAITING_TRACKING = range(12)
+MAIN_MENU, CATALOG, LOYALTY, TRACKING, FAQ, DELIVERY, SELECTING_QUANTITY, USE_POINTS, DELIVERY_METHOD, ENTER_USER_DATA, CONFIRM_ORDER, WAITING_TRACKING, ORDER_COMMENT = range(13)
 
 # Add new state for admin input
 ADMIN_TRACKING_INPUT = 999  # New state for admin tracking code input
@@ -573,13 +572,39 @@ async def handle_delivery_method(update: Update, context: ContextTypes.DEFAULT_T
         )
         return DELIVERY_METHOD
     
+    # Ask for order comment
+    await update.message.reply_text(
+        "💬 Хотите добавить комментарий к заказу? (например, пожелания по доставке или особые требования)\n"
+        "Если комментарий не нужен, отправьте 'Нет'",
+        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("Нет")], [KeyboardButton("◀️ Назад")]], resize_keyboard=True)
+    )
+    return ORDER_COMMENT
+
+async def handle_order_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle order comment input"""
+    text = update.message.text
+    
+    if text == "◀️ Назад":
+        keyboard = [[KeyboardButton(method['name'])] for method in DELIVERY_METHODS.values()]
+        keyboard.append([KeyboardButton("◀️ Назад")])
+        await update.message.reply_text(
+            "✨ Выберите способ доставки:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        )
+        return DELIVERY_METHOD
+    
+    # Save comment or None if user doesn't want to add one
+    context.user_data['order']['comment'] = None if text.lower() == 'нет' else text
+    
     # After selecting delivery method, ask for user data
     example_format = (
         "📝 Пример заполнения:\n"
         "━━━━━━━━━━━━━━━\n"
     )
     
-    if selected_method['name'] == '📮 Европочтой':
+    delivery_method = DELIVERY_METHODS[context.user_data['order']['delivery_method']]
+    
+    if delivery_method['name'] == '📮 Европочтой':
         example_format += (
             "ФИО: Иванов Иван Иванович\n"
             "Телефон: +375291234567\n"
@@ -587,7 +612,7 @@ async def handle_delivery_method(update: Update, context: ContextTypes.DEFAULT_T
             "Индекс: 220000\n"
             "Отделение: Европочта №15 (ул. Ленина 23)"
         )
-    elif selected_method['name'] == '📫 Белпочтой':
+    elif delivery_method['name'] == '📫 Белпочтой':
         example_format += (
             "ФИО: Иванов Иван Иванович\n"
             "Телефон: +375291234567\n"
@@ -595,7 +620,7 @@ async def handle_delivery_method(update: Update, context: ContextTypes.DEFAULT_T
             "Индекс: 220000\n"
             "Отделение: Белпочта №12 (ул. Советская 15)"
         )
-    elif selected_method['name'] == '🚐 Маршруткой':
+    elif delivery_method['name'] == '🚐 Маршруткой':
         example_format += (
             "Имя: Иван\n"
             "Телефон: +375291234567\n"
@@ -615,7 +640,7 @@ async def handle_delivery_method(update: Update, context: ContextTypes.DEFAULT_T
         "📋 Пожалуйста, укажите ваши данные в следующем формате:\n\n"
     )
     
-    if selected_method['name'] == '📮 Европочтой':
+    if delivery_method['name'] == '📮 Европочтой':
         message += (
             "ФИО: \n"
             "Телефон: \n"
@@ -623,7 +648,7 @@ async def handle_delivery_method(update: Update, context: ContextTypes.DEFAULT_T
             "Индекс: \n"
             "Отделение: \n"
         )
-    elif selected_method['name'] == '📫 Белпочтой':
+    elif delivery_method['name'] == '📫 Белпочтой':
         message += (
             "ФИО: \n"
             "Телефон: \n"
@@ -631,7 +656,7 @@ async def handle_delivery_method(update: Update, context: ContextTypes.DEFAULT_T
             "Индекс: \n"
             "Отделение: \n"
         )
-    elif selected_method['name'] == '🚐 Маршруткой':
+    elif delivery_method['name'] == '🚐 Маршруткой':
         message += (
             "Имя: \n"
             "Телефон: \n"
@@ -685,7 +710,7 @@ async def handle_user_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for field in required_fields:
         field_found = False
         for line in lines:
-            if line.startswith(field):
+            if line.strip().startswith(field):
                 # Check if the field has a value after the colon
                 if len(line.split(':')) < 2 or not line.split(':', 1)[1].strip():
                     missing_fields.append(field)
@@ -695,31 +720,10 @@ async def handle_user_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
             missing_fields.append(field)
     
     if missing_fields:
-        error_message = "❌ Пожалуйста, укажите все необходимые данные в правильном формате:\n\n"
-        if delivery_method['name'] in ['📮 Европочтой', '📫 Белпочтой']:
-            error_message += (
-                "ФИО: Иванов Иван Иванович\n"
-                "Телефон: +375291234567\n"
-                "Адрес: г. Минск, ул. Пушкина, д. 5, кв. 10\n"
-                "Индекс: 220000\n"
-                f"Отделение: {delivery_method['name'].split()[0]} №15 (ул. Ленина 23)"
-            )
-        elif delivery_method['name'] == '🚐 Маршруткой':
-            error_message += (
-                "Имя: Иван\n"
-                "Телефон: +375291234567\n"
-                "Город: Минск\n"
-                "Желаемое время: 14:00"
-            )
-        else:  # Самовывоз
-            error_message += (
-                "Имя: Иван\n"
-                "Телефон: +375291234567\n"
-                "Желаемое время: 16:30"
-            )
-        
-        error_message += "\n\n✨ Скопируйте формат выше и заполните своими данными"
-        
+        error_message = "❌ Пожалуйста, укажите все необходимые данные. Не заполнены поля:\n\n"
+        for field in missing_fields:
+            error_message += f"{field} ...\n"
+        error_message += "\n✨ Скопируйте формат выше и заполните своими данными полностью."
         await update.message.reply_text(
             error_message,
             reply_markup=ReplyKeyboardMarkup([[KeyboardButton("◀️ Назад")]], resize_keyboard=True)
@@ -815,8 +819,13 @@ async def handle_order_confirmation(update: Update, context: ContextTypes.DEFAUL
                 f"💰 Сумма заказа: {order.get('final_price', 0)} р.\n"
                 f"💵 Итого к оплате: {order.get('final_price', 0)} р.\n\n"
                 f"🚚 Способ доставки: {DELIVERY_METHODS[order['delivery_method']]['name']}\n\n"
-                "📝 Данные для доставки:\n"
             )
+            
+            # Add comment if exists
+            if order.get('comment'):
+                admin_message += f"💬 Комментарий к заказу:\n{order['comment']}\n\n"
+            
+            admin_message += "📝 Данные для доставки:\n"
             
             # Add delivery data in a clean format
             delivery_data = order['user_data'].split('\n')
@@ -847,8 +856,14 @@ async def handle_order_confirmation(update: Update, context: ContextTypes.DEFAUL
                 "📋 Информация о заказе:\n"
                 f"• Товар: {order.get('product_name')}\n"
                 f"• Количество: {order.get('quantity')}\n"
-                f"• Сумма: {order.get('final_price')} р.\n\n"
-                "🚚 Статус:\n"
+                f"• Сумма: {order.get('final_price')} р.\n"
+            )
+            
+            if order.get('comment'):
+                success_message += f"• Комментарий: {order['comment']}\n"
+            
+            success_message += (
+                "\n🚚 Статус:\n"
                 "• Заказ принят в обработку\n"
                 "• Ожидает подтверждения\n\n"
                 "👤 Что дальше:\n"
@@ -1216,6 +1231,10 @@ def main():
             DELIVERY_METHOD: [
                 MessageHandler(filters.Regex("^◀️ Назад$"), handle_quantity),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_delivery_method)
+            ],
+            ORDER_COMMENT: [
+                MessageHandler(filters.Regex("^◀️ Назад$"), handle_delivery_method),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order_comment)
             ],
             ENTER_USER_DATA: [
                 MessageHandler(filters.Regex("^◀️ Назад$"), handle_delivery_method),
