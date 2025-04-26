@@ -16,13 +16,12 @@ lib64/
 parts/
 sdist/
 var/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 
 # Virtual Environment
-.env
-.venv
 venv/
 ENV/
 
@@ -34,4 +33,12 @@ ENV/
 
 # Project specific
 orders.json
-loyalty.json 
+loyalty.json
+
+# Local configuration files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log 
