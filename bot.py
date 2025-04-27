@@ -6,6 +6,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from dotenv import load_dotenv
 from datetime import datetime, time, timedelta
 import telegram
+import pandas as pd
+import io
 
 # Load environment variables
 load_dotenv()
@@ -1189,6 +1191,424 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return MAIN_MENU
 
+def get_stats_for_last_7_days():
+    """Get statistics for the last 7 days"""
+    orders = load_orders()
+    now = datetime.now()
+    week_ago = now - timedelta(days=7)
+    
+    # Filter orders for last 7 days
+    recent_orders = {
+        order_id: order for order_id, order in orders.items()
+        if datetime.strptime(order.get('timestamp', ''), "%Y-%m-%d %H:%M:%S") > week_ago
+    }
+    
+    # Calculate statistics
+    total_orders = len(recent_orders)
+    total_sum = sum(order.get('final_price', 0) for order in recent_orders.values())
+    completed = sum(1 for order in recent_orders.values() if order.get('delivered'))
+    in_progress = total_orders - completed
+    
+    # Get unique users
+    unique_users = len(set(order.get('user_id') for order in recent_orders.values()))
+    
+    # Get top 3 clients
+    user_totals = {}
+    for order in recent_orders.values():
+        user_id = order.get('user_id')
+        if user_id:
+            user_totals[user_id] = user_totals.get(user_id, 0) + order.get('final_price', 0)
+    
+    top_clients = sorted(user_totals.items(), key=lambda x: x[1], reverse=True)[:3]
+    
+    return {
+        'total_orders': total_orders,
+        'total_sum': total_sum,
+        'completed': completed,
+        'in_progress': in_progress,
+        'new_users': unique_users,
+        'top_clients': top_clients
+    }
+
+async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id=None):
+    """Show admin panel with statistics"""
+    # Get statistics for last 7 days
+    stats = get_stats_for_last_7_days()
+    
+    # Format admin panel message
+    admin_message = (
+        "🛠 Админ-панель\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "За 7 дней:\n"
+        f"Всего заказов: {stats['total_orders']}\n"
+        f"На сумму: {stats['total_sum']} р.\n"
+        f"Выполнено: {stats['completed']}\n"
+        f"В обработке: {stats['in_progress']}\n"
+        f"Новых пользователей: {stats['new_users']}\n\n"
+        "Топ-3 клиента:\n"
+    )
+    
+    # Add top clients
+    for i, (user_id, total) in enumerate(stats['top_clients'], 1):
+        admin_message += f"{i}. {user_id} — {total} р.\n"
+    
+    # Create inline keyboard with admin actions
+    keyboard = [
+        [
+            InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast"),
+            InlineKeyboardButton("➕ Добавить товар", callback_data="admin_add_product")
+        ],
+        [
+            InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
+            InlineKeyboardButton("📥 Экспорт в Excel", callback_data="admin_export")
+        ],
+        [
+            InlineKeyboardButton("📋 Заказы за 7 дней", callback_data="admin_recent_orders"),
+            InlineKeyboardButton("👥 Новые пользователи", callback_data="admin_new_users")
+        ]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if message_id:
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=message_id,
+            text=admin_message,
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(admin_message, reply_markup=reply_markup)
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle admin command - show admin panel"""
+    # Check if the command is from admin group
+    if str(update.effective_chat.id) != ADMIN_CHAT_ID:
+        return
+    
+    await show_admin_panel(update, context)
+    return MAIN_MENU
+
+async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle admin panel button callbacks"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "admin_back":
+        # Return to main admin panel
+        await show_admin_panel(update, context, query.message.message_id)
+        return MAIN_MENU
+    
+    elif query.data == "admin_broadcast":
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+        await query.message.edit_text(
+            "📢 Введите текст для рассылки:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ADMIN_BROADCAST
+        
+    elif query.data == "admin_add_product":
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+        await query.message.edit_text(
+            "➕ Для добавления товара отправьте данные в формате:\n"
+            "Название\n"
+            "Цена\n"
+            "Категория\n"
+            "Описание",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ADMIN_ADD_PRODUCT
+        
+    elif query.data == "admin_stats":
+        stats = get_stats_for_last_7_days()
+        stats_message = (
+            "📊 Подробная статистика\n"
+            "━━━━━━━━━━━━━━━\n\n"
+            f"Заказов за неделю: {stats['total_orders']}\n"
+            f"Общая сумма: {stats['total_sum']} р.\n"
+            f"Средний чек: {stats['total_sum']/stats['total_orders'] if stats['total_orders'] else 0:.2f} р.\n"
+            f"Конверсия: {(stats['completed']/stats['total_orders']*100) if stats['total_orders'] else 0:.1f}%"
+        )
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+        await query.message.edit_text(
+            stats_message,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    elif query.data == "admin_export":
+        try:
+            # Show processing message
+            processing_message = await query.message.edit_text(
+                "📊 Подготовка файла...",
+                reply_markup=None
+            )
+            
+            # Generate Excel file
+            excel_buffer = await export_to_excel(context)
+            
+            # Get current date for filename
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            
+            # Send Excel file
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=excel_buffer,
+                filename=f'orders_{current_date}.xlsx',
+                caption="📊 Отчет по заказам"
+            )
+            
+            # Return to admin panel
+            await show_admin_panel(update, context, processing_message.message_id)
+            
+        except Exception as e:
+            logging.error(f"Error exporting to Excel: {e}")
+            keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+            await query.message.edit_text(
+                "❌ Произошла ошибка при создании отчета",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        return MAIN_MENU
+        
+    elif query.data == "admin_recent_orders":
+        orders = load_orders()
+        now = datetime.now()
+        week_ago = now - timedelta(days=7)
+        recent_orders = {
+            order_id: order for order_id, order in orders.items()
+            if datetime.strptime(order.get('timestamp', ''), "%Y-%m-%d %H:%M:%S") > week_ago
+        }
+        
+        if not recent_orders:
+            keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+            await query.message.edit_text(
+                "📋 Нет заказов за последние 7 дней",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+            
+        orders_message = "📋 Заказы за 7 дней:\n\n"
+        for order_id, order in recent_orders.items():
+            status = "✅" if order.get('delivered') else "🕒"
+            orders_message += (
+                f"{status} Заказ {order_id}\n"
+                f"👤 Пользователь: {order.get('user_id')}\n"
+                f"💰 Сумма: {order.get('final_price')} р.\n"
+                f"📅 Дата: {order.get('timestamp')}\n\n"
+            )
+        
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+        await query.message.edit_text(
+            orders_message,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    elif query.data == "admin_new_users":
+        orders = load_orders()
+        now = datetime.now()
+        week_ago = now - timedelta(days=7)
+        new_users = set()
+        
+        for order in orders.values():
+            if datetime.strptime(order.get('timestamp', ''), "%Y-%m-%d %H:%M:%S") > week_ago:
+                new_users.add(order.get('user_id'))
+        
+        users_message = f"👥 Новые пользователи за 7 дней: {len(new_users)}\n\n"
+        for user_id in new_users:
+            users_message += f"• ID: {user_id}\n"
+        
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+        await query.message.edit_text(
+            users_message,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    return MAIN_MENU
+
+async def handle_admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle broadcast message from admin"""
+    if str(update.effective_chat.id) != ADMIN_CHAT_ID:
+        return MAIN_MENU
+    
+    if update.message.text == "◀️ Назад":
+        await show_admin_panel(update, context)
+        return MAIN_MENU
+        
+    broadcast_text = update.message.text
+    
+    # Load orders to get unique users
+    orders = load_orders()
+    all_users = set(order.get('user_id') for order in orders.values() if order.get('user_id'))
+    
+    success_count = 0
+    fail_count = 0
+    
+    # Send message to all users
+    for user_id in all_users:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=broadcast_text
+            )
+            success_count += 1
+        except Exception as e:
+            logging.error(f"Failed to send broadcast to {user_id}: {e}")
+            fail_count += 1
+    
+    # Send summary to admin
+    summary = (
+        "📢 Результаты рассылки:\n"
+        f"✅ Успешно отправлено: {success_count}\n"
+        f"❌ Ошибок отправки: {fail_count}\n"
+        f"👥 Всего пользователей: {len(all_users)}"
+    )
+    
+    await update.message.reply_text(summary)
+    await show_admin_panel(update, context)
+    return MAIN_MENU
+
+async def handle_admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle adding new product from admin"""
+    if str(update.effective_chat.id) != ADMIN_CHAT_ID:
+        return MAIN_MENU
+    
+    if update.message.text == "◀️ Назад":
+        await show_admin_panel(update, context)
+        return MAIN_MENU
+        
+    try:
+        # Parse product data
+        lines = update.message.text.strip().split('\n')
+        if len(lines) < 4:
+            raise ValueError("Недостаточно данных")
+            
+        name = lines[0].strip()
+        price = float(lines[1].strip())
+        category = lines[2].strip()
+        description = '\n'.join(lines[3:]).strip()
+        
+        # Generate product ID
+        product_id = name.lower().replace(' ', '_')
+        
+        # Add to PRODUCTS dictionary
+        PRODUCTS[product_id] = {
+            'name': name,
+            'price': price,
+            'category': category,
+            'description': description
+        }
+        
+        # Confirm to admin
+        confirmation = (
+            "✅ Товар добавлен:\n\n"
+            f"📱 {name}\n"
+            f"💰 {price} р.\n"
+            f"📁 {category}\n"
+            f"📝 {description}"
+        )
+        
+        await update.message.reply_text(confirmation)
+        await show_admin_panel(update, context)
+        
+    except ValueError as e:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+        await update.message.reply_text(
+            "❌ Ошибка в формате данных!\n\n"
+            "Используйте формат:\n"
+            "Название\n"
+            "Цена\n"
+            "Категория\n"
+            "Описание",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logging.error(f"Error adding product: {e}")
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_back")]]
+        await update.message.reply_text(
+            "❌ Произошла ошибка при добавлении товара",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    return MAIN_MENU
+
+async def export_to_excel(context: ContextTypes.DEFAULT_TYPE):
+    """Export orders data to Excel file"""
+    orders = load_orders()
+    
+    # Prepare data for Excel
+    excel_data = []
+    for order_id, order in orders.items():
+        # Convert timestamp string to datetime
+        try:
+            order_date = datetime.strptime(order.get('timestamp', ''), "%Y-%m-%d %H:%M:%S")
+        except:
+            order_date = None
+            
+        excel_data.append({
+            'ID заказа': order_id,
+            'Дата': order_date,
+            'Покупатель ID': order.get('user_id'),
+            'Товар': order.get('product_name'),
+            'Количество': order.get('quantity'),
+            'Сумма': order.get('final_price'),
+            'Способ доставки': DELIVERY_METHODS[order.get('delivery_method', '')]['name'] if order.get('delivery_method') else '',
+            'Статус': 'Доставлен' if order.get('delivered') else 'В обработке',
+            'Трек-код': order.get('tracking_code', ''),
+            'Использовано баллов': order.get('points_used', 0),
+            'Комментарий': order.get('comment', '')
+        })
+    
+    # Create DataFrame
+    df = pd.DataFrame(excel_data)
+    
+    # Sort by date
+    if not df.empty and df['Дата'].notna().any():
+        df = df.sort_values('Дата', ascending=False)
+    
+    # Create Excel file in memory
+    excel_buffer = io.BytesIO()
+    
+    # Create Excel writer
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        # Write orders sheet
+        df.to_excel(writer, sheet_name='Заказы', index=False)
+        
+        # Get workbook and worksheet
+        workbook = writer.book
+        worksheet = writer.sheets['Заказы']
+        
+        # Add formats
+        header_format = workbook.add_format({
+            'bold': True,
+            'bg_color': '#4B5563',
+            'font_color': 'white',
+            'border': 1
+        })
+        
+        cell_format = workbook.add_format({
+            'border': 1
+        })
+        
+        # Apply formats
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+            
+        # Auto-adjust columns width
+        for i, col in enumerate(df.columns):
+            max_length = max(
+                df[col].astype(str).apply(len).max(),
+                len(str(col))
+            ) + 2
+            worksheet.set_column(i, i, max_length)
+            
+        # Add totals
+        total_row = len(df) + 2
+        worksheet.write(total_row, 0, 'ИТОГО:', header_format)
+        worksheet.write(total_row, 5, f'=SUM(F2:F{len(df)+1})', header_format)
+    
+    # Get the value of the buffer
+    excel_buffer.seek(0)
+    return excel_buffer
+
 def main():
     """Start the bot"""
     token = os.getenv('BOT_TOKEN')
@@ -1198,10 +1618,16 @@ def main():
     # Create and configure application
     application = Application.builder().token(token).build()
     
+    # Add new states for admin functions
+    global ADMIN_BROADCAST, ADMIN_ADD_PRODUCT
+    ADMIN_BROADCAST = 1000
+    ADMIN_ADD_PRODUCT = 1001
+    
     # Main conversation handler
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
+            CommandHandler("admin", admin_command),
             CallbackQueryHandler(send_tracking_code, pattern="^track")
         ],
         states={
@@ -1213,7 +1639,15 @@ def main():
                 MessageHandler(filters.Regex("^🚚 Доставка$"), show_delivery),
                 MessageHandler(filters.Regex("^🔄 Перезапустить бота$"), restart_bot),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu),
-                CallbackQueryHandler(send_tracking_code, pattern="^track")
+                CallbackQueryHandler(send_tracking_code, pattern="^track"),
+                CallbackQueryHandler(handle_admin_callback, pattern="^admin_"),
+                CommandHandler("admin", admin_command)
+            ],
+            ADMIN_BROADCAST: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_broadcast)
+            ],
+            ADMIN_ADD_PRODUCT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_add_product)
             ],
             CATALOG: [
                 MessageHandler(filters.Regex("^◀️ В главное меню$"), start),
